@@ -1,0 +1,30 @@
+FROM jupyter/pyspark-notebook:spark-3.0.1
+
+USER root
+
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://jdbc.postgresql.org/download/postgresql-42.7.4.jar -O /usr/local/spark/jars/postgresql-42.7.4.jar
+
+COPY requirements.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+RUN wget https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz && \
+    gunzip cs-x86_64-pc-linux.gz && \
+    chmod +x cs-x86_64-pc-linux && \
+    ./cs-x86_64-pc-linux setup --yes && \
+    rm cs-x86_64-pc-linux
+
+COPY spark-defaults.conf /usr/local/spark/conf/
+
+RUN mkdir -p /home/jovyan/work/workshop-analysis \
+             /home/jovyan/work/data \
+             /home/jovyan/work/apps
+
+USER $NB_UID
+
+ENV PYSPARK_SUBMIT_ARGS="--packages org.postgresql:postgresql:42.7.4 --driver-memory 1g --executor-memory 1g pyspark-shell"

@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database optimized for workshop data
+  postgres:
+    image: postgres:15
+    container_name: workshop-postgres
+    hostname: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: jesus_maria_workshops
+      POSTGRES_USER: workshop_user
+      POSTGRES_PASSWORD: workshop_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+      - ./workshop-data:/workshop-data
+    networks:
+      - workshop-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workshop_user -d jesus_maria_workshops"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Spark Master with workshop-specific configurations
+  spark-master:
+    image: bde2020/spark-master:3.0.1-hadoop3.2
+    container_name: spark-master-workshop
+    hostname: spark-master
+    ports:
+      - "8080:8080"  # Spark Web UI
+      - "7077:7077"  # Spark Master Port
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./workshop-data:/opt/workshop-data
+      - ./spark-logs:/opt/spark/logs
+      - spark_events:/tmp/spark-events
+    networks:
+      - workshop-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Spark Workers for distributed processing
+  spark-worker-1:
+    image: bde2020/spark-worker:3.0.1-hadoop3.2
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    ports:
+      - "8081:8081"
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_WEBUI_PORT=8081
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./workshop-data:/opt/workshop-data
+    networks:
+      - workshop-network
+    depends_on:
+      - spark-master
+
+  spark-worker-2:
+    image: bde2020/spark-worker:3.0.1-hadoop3.2
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    ports:
+      - "8082:8081"
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_WEBUI_PORT=8081
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./workshop-data:/opt/workshop-data
+    networks:
+      - workshop-network
+    depends_on:
+      - spark-master
+
+  # Jupyter environment for interactive development
+  jupyter-workshop:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    container_name: jupyter-workshop
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_MASTER=spark://spark-master:7077
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=jesus_maria_workshops
+      - POSTGRES_USER=workshop_user
+      - POSTGRES_PASSWORD=workshop_pass
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./workshop-data:/home/jovyan/data
+      - ./spark-apps:/home/jovyan/apps
+    networks:
+      - workshop-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  workshop-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  spark_events:
+    driver: local
