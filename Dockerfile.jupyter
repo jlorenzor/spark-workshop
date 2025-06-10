@@ -1,30 +1,65 @@
-FROM jupyter/pyspark-notebook:spark-3.0.1
+# ✅ DOCKERFILE CORREGIDO - SIN ERRORES
+FROM jupyter/pyspark-notebook:spark-3.1.1
 
 USER root
 
+# Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     wget \
     curl \
+    unzip \
+    openjdk-11-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget https://jdbc.postgresql.org/download/postgresql-42.7.4.jar -O /usr/local/spark/jars/postgresql-42.7.4.jar
+# Configurar JAVA_HOME para compatibilidad con Spark 3.0.1
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 
+# Descargar driver PostgreSQL JDBC
+RUN wget https://jdbc.postgresql.org/download/postgresql-42.7.4.jar \
+    -O /usr/local/spark/jars/postgresql-42.7.4.jar
+
+# Instalar SBT para compilación Scala
+RUN wget https://github.com/sbt/sbt/releases/download/v1.8.2/sbt-1.8.2.tgz \
+    && tar -xzf sbt-1.8.2.tgz -C /opt/ \
+    && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt \
+    && rm sbt-1.8.2.tgz
+
+# Copiar e instalar dependencias Python
 COPY requirements.txt /tmp/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-RUN wget https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz && \
-    gunzip cs-x86_64-pc-linux.gz && \
-    chmod +x cs-x86_64-pc-linux && \
-    ./cs-x86_64-pc-linux setup --yes && \
-    rm cs-x86_64-pc-linux
+# ✅ INSTALAR ALMOND KERNEL - SINTAXIS CORREGIDA
+RUN curl -Lo coursier https://git.io/coursier-cli \
+    && chmod +x coursier \
+    && ./coursier bootstrap \
+        --java-opt -XX:MaxMetaspaceSize=256m \
+        --java-opt -Xms64m \
+        --java-opt -Xmx1g \
+        almond:0.13.2 \
+        --scala 2.12.10 \
+        -o almond \
+    && ./almond --install \
+    && rm coursier almond
 
+# Copiar configuración Spark
 COPY spark-defaults.conf /usr/local/spark/conf/
 
-RUN mkdir -p /home/jovyan/work/workshop-analysis \
-             /home/jovyan/work/data \
-             /home/jovyan/work/apps
+# Crear directorios de trabajo
+RUN mkdir -p /home/jlorenzor/work/workshop-analysis \
+             /home/jlorenzor/work/data \
+             /home/jlorenzor/work/apps \
+             /home/jlorenzor/scripts
 
+# Establecer permisos correctos
+RUN chown -R $NB_UID:$NB_GID /home/jlorenzor/
+
+# Cambiar a usuario notebook
 USER $NB_UID
 
+# Configurar variables de entorno para Spark
 ENV PYSPARK_SUBMIT_ARGS="--packages org.postgresql:postgresql:42.7.4 --driver-memory 1g --executor-memory 1g pyspark-shell"
+ENV SPARK_HOME=/usr/local/spark
+
+# Directorio de trabajo
+WORKDIR /home/jlorenzor/work

@@ -10,20 +10,19 @@ object WorkshopAnalysisApp {
     import spark.implicits._
     
     try {
-      // Load workshop data
+      println("🌟 ANÁLISIS DE TALLERES MUNICIPALES JESÚS MARÍA 🌟")
+      println("=" * 60)
+      
       val workshopDF = loadWorkshopData(spark)
       
-      // Execute all required analyses
-      println("=== JESÚS MARÍA WORKSHOP ENROLLMENT ANALYSIS ===")
-      
-      // MapReduce Operations
+      // REQUERIMIENTO 2: MapReduce Operations
       performMapReduceAnalysis(spark, workshopDF)
       
-      // Spark SQL Operations
+      // REQUERIMIENTO 3: Spark SQL Operations
       performSparkSQLAnalysis(spark, workshopDF)
       
-      // Save results to PostgreSQL
-      saveResults(workshopDF)
+      // Guardar resultados
+      saveResults(spark, workshopDF)
       
     } finally {
       spark.stop()
@@ -38,13 +37,13 @@ object WorkshopAnalysisApp {
       .config("spark.sql.shuffle.partitions", "4")
       .config("spark.default.parallelism", "4")
       .getOrCreate()
-  } 
+  }
   
   def loadWorkshopData(spark: SparkSession): DataFrame = {
     val schema = StructType(Array(
-      StructField("fecha_corte", DateType, true),
+      StructField("fecha_corte", StringType, true),
       StructField("codigo_alumno", StringType, true),
-      StructField("fecha_nacimiento", DateType, true),
+      StructField("fecha_nacimiento", StringType, true),
       StructField("edad", IntegerType, true),
       StructField("sexo", StringType, true),
       StructField("taller", StringType, true),
@@ -52,9 +51,9 @@ object WorkshopAnalysisApp {
       StructField("dias", StringType, true),
       StructField("horario", StringType, true),
       StructField("periodo", StringType, true),
-      StructField("precio_jesus_maria", DecimalType(10,2), true),
-      StructField("precio_publico_general", DecimalType(10,2), true),
-      StructField("precio_total", DecimalType(10,2), true),
+      StructField("precio_jesus_maria", DoubleType, true),
+      StructField("precio_publico_general", DoubleType, true),
+      StructField("precio_total", DoubleType, true),
       StructField("departamento", StringType, true),
       StructField("provincia", StringType, true),
       StructField("distrito", StringType, true),
@@ -64,260 +63,237 @@ object WorkshopAnalysisApp {
     spark.read
       .format("csv")
       .option("header", "true")
+      .option("delimiter", ";")
+      .option("encoding", "UTF-8")
       .schema(schema)
-      .load("/opt/workshop-data/inscripciones_talleres_jesus_maria.csv")
+      .load("/home/jlorenzor/data/inscripciones_talleres_jesus_maria.csv")
   }
   
   def performMapReduceAnalysis(spark: SparkSession, df: DataFrame): Unit = {
     import spark.implicits._
     
-    println("\n=== MAPREDUCE ANALYSIS ===")
+    println("\n🔥 === ANÁLISIS MAPREDUCE === 🔥")
     
-    // Query 1: Workshop popularity by demographics (3+ fields)
-    println("\n1. Workshop Popularity by Age Group and Gender:")
-    val demographicAnalysis = df
-      .withColumn("age_group", 
-        when($"edad" < 18, "Youth")
-        .when($"edad" < 35, "Young Adult")
-        .when($"edad" < 55, "Adult")
-        .otherwise("Senior"))
-      .groupBy($"taller", $"age_group", $"sexo")
-      .agg(
-        count("*").as("enrollment_count"),
-        avg($"precio_total").as("avg_price"),
-        countDistinct($"codigo_alumno").as("unique_students")
-      )
-      .orderBy(desc("enrollment_count"))
+    // 2.1: Tres consultas con 3+ campos
+    println("\n📊 2.1.1 Consulta Multi-campo: Demografía por Taller")
+    df.groupBy($"taller", $"sexo", $"distrito")
+      .agg(count("*").as("total_inscripciones"), avg($"edad").as("edad_promedio"))
+      .orderBy(desc("total_inscripciones"))
+      .show(10, truncate = false)
     
-    demographicAnalysis.show(20, false) 
+    println("\n📊 2.1.2 Consulta Multi-campo: Análisis Temporal-Geográfico")
+    df.groupBy($"periodo", $"departamento", $"local")
+      .agg(countDistinct($"codigo_alumno").as("estudiantes_unicos"), sum($"precio_total").as("ingresos_totales"))
+      .show(10, truncate = false)
     
-    // Query 2: Geographic enrollment patterns (3+ fields)
-    println("\n2. Geographic Enrollment Distribution:")
-    val geographicAnalysis = df
-      .groupBy($"departamento", $"provincia", $"distrito")
-      .agg(
-        count("*").as("total_enrollments"),
-        countDistinct($"codigo_alumno").as("unique_students"),
-        countDistinct($"taller").as("workshop_variety"),
-        avg($"precio_total").as("avg_price")
-      )
-      .orderBy(desc("total_enrollments"))
+    println("\n📊 2.1.3 Consulta Multi-campo: Horarios y Precios")
+    df.groupBy($"horario", $"dias", $"taller")
+      .agg(avg($"precio_total").as("precio_promedio"), count("*").as("demanda"))
+      .filter($"demanda" > 1)
+      .show(10, truncate = false)
     
-    geographicAnalysis.show(15, false)
+    // 2.2: Agrupar por tipos y encontrar max/min
+    println("\n📊 2.2 Agrupación con Max/Min por Tipo de Taller")
+    df.groupBy($"taller")
+      .agg(count("*").as("total"), min($"edad").as("edad_min"), max($"edad").as("edad_max"))
+      .orderBy(desc("total"))
+      .show(10, truncate = false)
     
-    // Query 3: Temporal pricing trends (3+ fields)
-    println("\n3. Monthly Pricing and Enrollment Trends:")
-    val temporalAnalysis = df
-      .withColumn("month", date_format($"fecha_corte", "yyyy-MM"))
-      .groupBy($"month", $"taller", $"local")
-      .agg(
-        count("*").as("enrollments"),
-        avg($"precio_jesus_maria").as("avg_resident_price"),
-        avg($"precio_publico_general").as("avg_public_price"),
-        avg($"precio_total").as("avg_total_price")
-      )
-      .orderBy($"month", desc("enrollments"))
+    // 2.3: Estadísticas completas
+    println("\n📊 2.3 Análisis Estadístico Completo: PRECIO_TOTAL")
+    df.agg(
+      avg($"precio_total").as("promedio"),
+      stddev($"precio_total").as("desviacion"),
+      min($"precio_total").as("minimo"),
+      max($"precio_total").as("maximo")
+    ).show()
     
-    temporalAnalysis.show(20, false)
-    
-    // Statistical Analysis of Pricing Field
-    println("\n4. Statistical Analysis of Pricing (precio_total):")
-    val pricingStats = df.agg(
-      avg($"precio_total").as("average"),
-      expr("percentile_approx(precio_total, 0.5)").as("median"),
-      stddev($"precio_total").as("standard_deviation"),
-      min($"precio_total").as("minimum"),
-      max($"precio_total").as("maximum")
-    )
-    
-    pricingStats.show()
-    
-    // Group by workshop type and find max/min pricing
-    println("\n5. Price Range by Workshop Type:")
-    val workshopPricing = df
+    // 2.4: Tres consultas con decimales
+    println("\n📊 2.4.1 Consulta Decimal: Análisis de Descuentos")
+    df.withColumn("descuento", $"precio_publico_general" - $"precio_jesus_maria")
+      .withColumn("porcentaje_desc", round(($"descuento" / $"precio_publico_general") * 100, 2))
       .groupBy($"taller")
-      .agg(
-        count("*").as("enrollments"),
-        min($"precio_total").as("min_price"),
-        max($"precio_total").as("max_price"),
-        avg($"precio_total").as("avg_price")
-      )
-      .orderBy(desc("enrollments"))
+      .agg(avg($"porcentaje_desc").as("desc_promedio"))
+      .show(10, truncate = false)
     
-    workshopPricing.show(15, false)
+    println("\n📊 2.4.2 Consulta Decimal: Segmentación de Precios")
+    df.withColumn("precio_norm", round($"precio_total" / 100.0, 3))
+      .groupBy($"sexo")
+      .agg(avg($"precio_norm").as("precio_normalizado"))
+      .show()
+    
+    println("\n📊 2.4.3 Consulta Decimal: Eficiencia Geográfica")
+    df.withColumn("precio_hora", round($"precio_total" / 8.0, 2))
+      .groupBy($"distrito")
+      .agg(avg($"precio_hora").as("costo_hora_avg"))
+      .show(10, truncate = false)
   }
   
   def performSparkSQLAnalysis(spark: SparkSession, df: DataFrame): Unit = {
-    // Register as temporary view
-    df.createOrReplaceTempView("workshops")
+    println("\n🔥 === ANÁLISIS SPARK SQL === 🔥")
     
-    println("\n=== SPARK SQL ANALYSIS ===")
+    df.createOrReplaceTempView("talleres")
+    storeInPostgreSQL(spark, df)
     
-    // Store in PostgreSQL
-    storeInPostgreSQL(df)
+    // 3.1: Consultas SQL básicas
+    println("\n📊 3.1.1 Columnas específicas")
+    spark.sql("SELECT codigo_alumno, taller, edad FROM talleres LIMIT 5").show()
     
-    // Various SQL queries
-    executeSQLQueries(spark)
+    println("\n�� 3.1.2 Comando FILTER")
+    spark.sql("SELECT taller, COUNT(*) as total FROM talleres WHERE edad > 25 GROUP BY taller").show()
     
-    // Advanced SQL with functions
+    println("\n📊 3.1.3 Información ordenada")
+    spark.sql("SELECT taller, precio_total FROM talleres ORDER BY precio_total DESC LIMIT 5").show()
+    
+    println("\n📊 3.1.4 GroupBy y Count")
+    spark.sql("SELECT sexo, COUNT(*) as total FROM talleres GROUP BY sexo").show()
+    
+    println("\n📊 3.1.5 Consulta con promedio")
+    spark.sql("SELECT taller, AVG(edad) as edad_avg FROM talleres GROUP BY taller").show(5)
+    
+    // 3.2: Funciones SQL avanzadas
     executeAdvancedSQLQueries(spark)
-  }
-  
-  def storeInPostgreSQL(df: DataFrame): Unit = {
-    val connectionProperties = new Properties()
-    connectionProperties.put("user", "workshop_user")
-    connectionProperties.put("password", "workshop_pass")
-    connectionProperties.put("driver", "org.postgresql.Driver")
     
-    val postgresUrl = "jdbc:postgresql://postgres:5432/jesus_maria_workshops"
-    
-    df.write
-      .mode("overwrite")
-      .jdbc(postgresUrl, "workshop_enrollments", connectionProperties) 
-    
-    println("Data successfully stored in PostgreSQL")
-  } 
-  
-  def executeSQLQueries(spark: SparkSession): Unit = {
-    println("\n6. SQL Query - Workshop Selection with Filters:")
-    spark.sql("""
-      SELECT taller, local, COUNT(*) as enrollments, AVG(edad) as avg_age
-      FROM workshops 
-      WHERE edad > 25 AND precio_total > 50
-      GROUP BY taller, local
-      ORDER BY enrollments DESC
-    """).show(10, false)
-    
-    println("\n7. SQL Query - Ordered Results by Price:")
-    spark.sql("""
-      SELECT codigo_alumno, taller, edad, sexo, precio_total
-      FROM workshops
-      ORDER BY precio_total DESC, edad ASC
-      LIMIT 15
-    """).show(15, false)
-    
-    println("\n8. SQL Query - Group By Analysis:")
-    spark.sql("""
-      SELECT departamento, 
-             COUNT(*) as total_enrollments,
-             COUNT(DISTINCT codigo_alumno) as unique_students
-      FROM workshops
-      GROUP BY departamento
-      HAVING COUNT(*) > 10
-      ORDER BY total_enrollments DESC
-    """).show()
+    // 3.3: Vistas temporales y JOINs
+    executeTemporaryViewQueries(spark)
   }
   
   def executeAdvancedSQLQueries(spark: SparkSession): Unit = {
-    println("\n9. Advanced SQL with Built-in Functions:")
-    
-    // Using org.apache.spark.sql.functions
     import org.apache.spark.sql.functions._
     
-    val advancedAnalysis = spark.table("workshops")
-      .select(
-        col("taller"),
-        col("sexo"),
-        when(col("edad") < 30, "Young").otherwise("Mature").as("age_category"),
-        round(col("precio_total"), 2).as("rounded_price"),
-        upper(col("distrito")).as("district_upper"),
-        length(col("taller")).as("workshop_name_length")
-      )
-      .groupBy(col("taller"), col("age_category"))
-      .agg(
-        count("*").as("count"),
-        avg("rounded_price").as("avg_price"),
-        collect_list("district_upper").as("districts")
-      )
-      .orderBy(desc("count"))
+    println("\n📊 3.2.1 Funciones SQL - Transformaciones")
+    spark.table("talleres")
+      .select(upper(col("sexo")).as("sexo_upper"), when(col("edad") < 30, "Joven").otherwise("Adulto").as("categoria"))
+      .show(5)
     
-    advancedAnalysis.show(15, false)
+    println("\n📊 3.2.2 Funciones SQL - Agregaciones")
+    spark.table("talleres")
+      .groupBy(col("distrito"))
+      .agg(sum(col("precio_total")).as("ingresos"), avg(col("edad")).as("edad_avg"))
+      .show(5)
     
-    // Temporary views for joins
-    createTemporaryViews(spark)
-    executeJoinQueries(spark)
+    println("\n📊 3.2.3 Funciones SQL - Ventanas")
+    import org.apache.spark.sql.expressions.Window
+    val windowSpec = Window.partitionBy("taller").orderBy(desc("precio_total"))
+    spark.table("talleres")
+      .withColumn("ranking", row_number().over(windowSpec))
+      .filter(col("ranking") <= 2)
+      .show(10)
   }
   
-  def createTemporaryViews(spark: SparkSession): Unit = {
-    // Create demographic summary view
+  def executeTemporaryViewQueries(spark: SparkSession): Unit = {
+    // Crear vistas temporales
     spark.sql("""
-      CREATE OR REPLACE TEMPORARY VIEW demographic_summary AS
+      CREATE OR REPLACE TEMPORARY VIEW resumen_demografico AS
       SELECT 
-        CASE WHEN edad < 18 THEN 'Youth'
-             WHEN edad < 35 THEN 'Young Adult'  
-             WHEN edad < 55 THEN 'Adult'
-             ELSE 'Senior' END as age_group,
-        sexo,
-        COUNT(*) as group_count,
-        AVG(precio_total) as avg_price
-      FROM workshops
-      GROUP BY age_group, sexo
+        CASE WHEN edad < 25 THEN 'Joven' ELSE 'Adulto' END as grupo_edad,
+        sexo, COUNT(*) as conteo
+      FROM talleres GROUP BY grupo_edad, sexo
     """)
     
-    // Create workshop summary view
     spark.sql("""
-      CREATE OR REPLACE TEMPORARY VIEW workshop_summary AS
+      CREATE OR REPLACE TEMPORARY VIEW resumen_talleres AS
+      SELECT taller, COUNT(*) as inscripciones, AVG(precio_total) as precio_avg
+      FROM talleres GROUP BY taller
+    """)
+    
+    // 3.3.1: Tres JOINs
+    println("\n📊 3.3.1.1 JOIN: Talleres y Demográfico")
+    spark.sql("""
+      SELECT t.taller, d.grupo_edad, d.conteo
+      FROM talleres t
+      JOIN resumen_demografico d ON 
+        (CASE WHEN t.edad < 25 THEN 'Joven' ELSE 'Adulto' END = d.grupo_edad)
+      LIMIT 10
+    """).show()
+    
+    println("\n📊 3.3.1.2 JOIN: Resumen Talleres")
+    spark.sql("""
+      SELECT rt.taller, rt.inscripciones, t.codigo_alumno
+      FROM resumen_talleres rt
+      JOIN talleres t ON rt.taller = t.taller
+      WHERE rt.inscripciones > 5
+      LIMIT 10
+    """).show()
+    
+    println("\n📊 3.3.1.3 JOIN: Auto-join Talleres")
+    spark.sql("""
+      SELECT t1.taller, t1.distrito, t2.distrito
+      FROM talleres t1
+      JOIN talleres t2 ON t1.taller = t2.taller AND t1.distrito != t2.distrito
+      LIMIT 10
+    """).show()
+    
+    // 3.3.2: Tres GroupBy con count
+    println("\n📊 3.3.2.1 GroupBy Count: Edad y Sexo")
+    spark.sql("""
       SELECT 
-        taller,
-        COUNT(*) as total_enrollments,
-        AVG(precio_total) as avg_price,
-        COUNT(DISTINCT local) as venue_count
-      FROM workshops
+        CASE WHEN edad < 30 THEN '20-29' ELSE '30+' END as rango,
+        sexo, COUNT(*) as cantidad
+      FROM talleres GROUP BY rango, sexo
+    """).show()
+    
+    println("\n📊 3.3.2.2 GroupBy Count: Talleres por Local")
+    spark.sql("""
+      SELECT local, COUNT(DISTINCT taller) as talleres_unicos
+      FROM talleres GROUP BY local
+    """).show()
+    
+    println("\n📊 3.3.2.3 GroupBy Count: Distribución Temporal")
+    spark.sql("""
+      SELECT periodo, distrito, COUNT(*) as inscripciones
+      FROM talleres GROUP BY periodo, distrito
+    """).show()
+    
+    // 3.3.3: Tres OrderBy combinados
+    println("\n📊 3.3.3.1 OrderBy + Filter + Agregación")
+    spark.sql("""
+      SELECT taller, AVG(precio_total) as precio_avg, COUNT(*) as total
+      FROM talleres
+      WHERE edad BETWEEN 25 AND 45
       GROUP BY taller
-    """)
+      ORDER BY precio_avg DESC
+    """).show(5)
     
-    // Create geographic summary view
-    spark.sql("""
-      CREATE OR REPLACE TEMPORARY VIEW geographic_summary AS
-      SELECT 
-        departamento,
-        provincia,
-        COUNT(*) as enrollments,
-        COUNT(DISTINCT taller) as workshop_variety
-      FROM workshops
-      GROUP BY departamento, provincia
-    """)
-  }
-  
-  def executeJoinQueries(spark: SparkSession): Unit = {
-    println("\n10. Join Analysis - Workshop and Demographics:")
-    spark.sql("""
-      SELECT w.taller, w.avg_price, d.age_group, d.group_count
-      FROM workshop_summary w
-      JOIN demographic_summary d ON 1=1
-      WHERE w.total_enrollments > 5 AND d.group_count > 3
-      ORDER BY w.avg_price DESC
-    """).show(15, false)
-    
-    println("\n11. Geographic and Workshop Join:")
-    spark.sql("""
-      SELECT g.departamento, g.provincia, w.taller, 
-             g.enrollments, w.avg_price
-      FROM geographic_summary g
-      JOIN workshops orig ON g.departamento = orig.departamento
-      JOIN workshop_summary w ON orig.taller = w.taller
-      GROUP BY g.departamento, g.provincia, w.taller, g.enrollments, w.avg_price
-      ORDER BY g.enrollments DESC
-    """).show(15, false)
-    
-    println("\n12. Complex Multi-table Analysis:")
+    println("\n�� 3.3.3.2 OrderBy + Case + Agrupación")
     spark.sql("""
       SELECT 
-        ws.taller,
-        COUNT(DISTINCT orig.departamento) as geographic_reach,
-        ws.total_enrollments,
-        ws.avg_price,
-        AVG(orig.edad) as overall_avg_age
-      FROM workshop_summary ws
-      JOIN workshops orig ON ws.taller = orig.taller
-      GROUP BY ws.taller, ws.total_enrollments, ws.avg_price
-      HAVING geographic_reach > 1
-      ORDER BY ws.total_enrollments DESC
-    """).show(10, false)
+        CASE WHEN precio_total < 80 THEN 'Bajo' ELSE 'Alto' END as categoria,
+        COUNT(*) as cantidad
+      FROM talleres
+      GROUP BY categoria
+      ORDER BY cantidad DESC
+    """).show()
+    
+    println("\n📊 3.3.3.3 OrderBy + Having + Múltiples campos")
+    spark.sql("""
+      SELECT distrito, taller, COUNT(*) as inscripciones
+      FROM talleres
+      GROUP BY distrito, taller
+      HAVING COUNT(*) > 1
+      ORDER BY distrito, inscripciones DESC
+    """).show(10)
   }
   
-  def saveResults(df: DataFrame): Unit = {
-    // Save analysis results
+  // def storeInPostgreSQL(df: DataFrame): Unit = {
+  //   val connectionProperties = new Properties()
+  //   connectionProperties.put("user", "workshop_user")
+  //   connectionProperties.put("password", "workshop_pass")
+  //   connectionProperties.put("driver", "org.postgresql.Driver")
+    
+  //   val postgresUrl = "jdbc:postgresql://postgres:5432/jesus_maria_workshops"
+    
+  //   try {
+  //     df.write.mode("overwrite").jdbc(postgresUrl, "workshop_enrollments", connectionProperties)
+  //     println("✅ Datos almacenados en PostgreSQL")
+  //   } catch {
+  //     case e: Exception => println(s"⚠️ Error PostgreSQL: ${e.getMessage}")
+  //   }
+  // }
+
+  def storeInPostgreSQL(spark: SparkSession, df: DataFrame): Unit = {
+    import spark.implicits._
+    
     val connectionProperties = new Properties()
     connectionProperties.put("user", "workshop_user")
     connectionProperties.put("password", "workshop_pass")
@@ -325,19 +301,116 @@ object WorkshopAnalysisApp {
     
     val postgresUrl = "jdbc:postgresql://postgres:5432/jesus_maria_workshops"
     
-    // Save summary statistics
-    val summaryStats = df.groupBy("taller")
-      .agg(
-        count("*").as("total_enrollments"),
-        avg("edad").as("avg_age"),
-        avg("precio_total").as("avg_price"),
-        countDistinct("codigo_alumno").as("unique_students")
-      )
+    try {
+      println("💾 Limpiando y almacenando datos en PostgreSQL...")
+      
+      // Limpiar datos antes de guardar
+      val cleanDF = df
+        .filter($"edad" >= 0 && $"edad" <= 120)
+        .filter($"sexo".isin("M", "F", "MASCULINO", "FEMENINO"))
+        .withColumn("fecha_corte_clean", 
+          when($"fecha_corte".isNotNull && length($"fecha_corte") === 8, 
+              to_date($"fecha_corte", "yyyyMMdd")).otherwise(lit(null).cast("date")))
+        .withColumn("fecha_nacimiento_clean", 
+          when($"fecha_nacimiento".isNotNull && length($"fecha_nacimiento") === 8, 
+              to_date($"fecha_nacimiento", "yyyyMMdd")).otherwise(lit(null).cast("date")))
+        .drop("fecha_corte", "fecha_nacimiento")
+        .withColumnRenamed("fecha_corte_clean", "fecha_corte")
+        .withColumnRenamed("fecha_nacimiento_clean", "fecha_nacimiento")
+      
+      cleanDF.write.mode("overwrite").jdbc(postgresUrl, "workshop_enrollments", connectionProperties)
+      println("✅ Datos almacenados en PostgreSQL")
+    } catch {
+      case e: Exception => println(s"⚠️ Error PostgreSQL: ${e.getMessage}")
+    }
+  }
+
+  def saveResults(spark: SparkSession, df: DataFrame): Unit = {
+    import spark.implicits._
     
-    summaryStats.write
-      .mode("overwrite")
-      .jdbc(postgresUrl, "workshop_analysis_results", connectionProperties)
+    val connectionProperties = new Properties()
+    connectionProperties.put("user", "workshop_user")
+    connectionProperties.put("password", "workshop_pass")
+    connectionProperties.put("driver", "org.postgresql.Driver")
     
-    println("Analysis results saved to PostgreSQL")
+    val postgresUrl = "jdbc:postgresql://postgres:5432/jesus_maria_workshops"
+    
+    try {
+      println("📊 Guardando análisis como tablas...")
+      
+      // 1. Análisis demográfico por taller
+      val demographicAnalysis = df.groupBy("taller", "sexo")
+        .agg(
+          count("*").as("total_inscripciones"),
+          avg("edad").as("edad_promedio"),
+          min("edad").as("edad_minima"),
+          max("edad").as("edad_maxima"),
+          countDistinct("codigo_alumno").as("estudiantes_unicos")
+        )
+      
+      // 2. Análisis de precios por taller
+      val priceAnalysis = df.groupBy("taller")
+        .agg(
+          count("*").as("total_inscripciones"),
+          avg("precio_total").as("precio_promedio"),
+          min("precio_total").as("precio_minimo"),
+          max("precio_total").as("precio_maximo"),
+          avg("precio_jesus_maria").as("precio_residente_promedio"),
+          avg("precio_publico_general").as("precio_publico_promedio")
+        )
+      
+      // 3. Análisis geográfico
+      val geographicAnalysis = df.groupBy("distrito", "local")
+        .agg(
+          count("*").as("total_inscripciones"),
+          countDistinct("taller").as("variedad_talleres"),
+          avg("precio_total").as("precio_promedio"),
+          sum("precio_total").as("ingresos_totales")
+        )
+      
+      // 4. Análisis temporal
+      val temporalAnalysis = df.groupBy("periodo", "taller")
+        .agg(
+          count("*").as("inscripciones"),
+          countDistinct("codigo_alumno").as("estudiantes_unicos"),
+          avg("edad").as("edad_promedio")
+        )
+      
+      // 5. Resumen general (ya existente mejorado)
+      val summaryStats = df.groupBy("taller")
+        .agg(
+          count("*").as("total_inscripciones"),
+          avg("edad").as("edad_promedio"),
+          avg("precio_total").as("precio_promedio"),
+          countDistinct("codigo_alumno").as("estudiantes_unicos"),
+          countDistinct("local").as("locales_disponibles")
+        )
+      
+      // Guardar todas las tablas
+      demographicAnalysis.write.mode("overwrite")
+        .jdbc(postgresUrl, "analisis_demografico", connectionProperties)
+        
+      priceAnalysis.write.mode("overwrite")
+        .jdbc(postgresUrl, "analisis_precios", connectionProperties)
+        
+      geographicAnalysis.write.mode("overwrite")
+        .jdbc(postgresUrl, "analisis_geografico", connectionProperties)
+        
+      temporalAnalysis.write.mode("overwrite")
+        .jdbc(postgresUrl, "analisis_temporal", connectionProperties)
+        
+      summaryStats.write.mode("overwrite")
+        .jdbc(postgresUrl, "analisis_resumen_talleres", connectionProperties)
+      
+      println("✅ Todas las consultas guardadas como tablas:")
+      println("   - analisis_demografico")
+      println("   - analisis_precios") 
+      println("   - analisis_geografico")
+      println("   - analisis_temporal")
+      println("   - analisis_resumen_talleres")
+      
+    } catch {
+      case e: Exception => println(s"⚠️ No se pudo guardar análisis: ${e.getMessage}")
+    }
   }
 }
